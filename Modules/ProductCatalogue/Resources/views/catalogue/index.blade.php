@@ -1,0 +1,1161 @@
+@extends('layouts.guest')
+@section('title', $business->name)
+
+@section('content')
+<!-- Content Header (Page header) -->
+<section class="content-header text-center" id="top">
+    <h2 class="tw-text-xl md:tw-text-3xl tw-font-bold tw-text-black" >{{$business->name}}</h2>
+    <h4 class="mb-0 tw-text-xl md:tw-text-3xl tw-font-bold tw-text-black">{{$business_location->name}}</h4>
+    <p>{!! $business_location->location_address !!}</p>
+</section> 
+<!-- Panier flottant -->
+<div class="floating-cart" id="floatingCart">
+    <i class="fas fa-shopping-cart"></i>
+    <span class="cart-badge" id="cartBadge">0</span>
+</div>
+
+<!-- Modal Panier -->
+<div class="cart-modal" id="cartModal">
+    <div class="cart-modal-content">
+        <div class="cart-modal-header">
+            <h3><i class="fas fa-shopping-cart"></i> Mon Panier</h3>
+            <button class="cart-close" id="closeCartModal">&times;</button>
+        </div>
+        <div class="cart-modal-body" id="cartModalBody">
+            <!-- Le contenu sera inséré dynamiquement -->
+        </div>
+        <div class="cart-modal-footer" id="cartModalFooter">
+            <!-- Le footer sera inséré dynamiquement -->
+        </div>
+    </div>
+</div>
+<section class="no-print">
+    <div class="container">
+        <!-- Static navbar -->
+        <nav class="navbar-default tw-transition-all tw-duration-5000 tw-shrink-0 tw-rounded-2xl tw-m-[16px] tw-border-2 !tw-bg-white">
+            <div class="container-fluid">
+                <div class="navbar-header">
+                    <button type="button" class="navbar-toggle collapsed" data-toggle="collapse" data-target="#navbar" aria-expanded="false" aria-controls="navbar" style="margin-top: 3px; margin-right: 3px;">
+                        <span class="sr-only">Toggle navigation</span>
+                        <span class="icon-bar"></span>
+                        <span class="icon-bar"></span>
+                        <span class="icon-bar"></span>
+                    </button>
+                    <a class="navbar-brand menu" href="#top">
+                        @if(!empty($business->logo))
+                            <img src="{{asset( 'uploads/business_logos/' . $business->logo)}}" alt="Logo" width="30">
+                        @else
+                            <i class="fas fa-boxes"></i>
+                        @endif
+                    </a>
+                </div>
+                
+                {{-- NOUVEAU - Barre de recherche intégrée --}}
+                <div class="search-in-navbar">
+                    <input 
+                        type="text" 
+                        class="search-input-navbar" 
+                        id="productSearchNavbar" 
+                        placeholder="Rechercher un produit..."
+                        autocomplete="off"
+                    >
+                    <button class="clear-search-navbar" id="clearSearchNavbar">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+                
+                <div id="navbar" class="navbar-collapse collapse">
+                    <ul class="nav navbar-nav">
+                    @foreach($categories as $key => $value)
+                        <li><a href="#category{{$key}}" class="menu">{{$value}}</a></li>
+                    @endforeach 
+                        <li><a href="#category0" class="menu">Uncategorized</a></li>           
+                    </ul>
+                </div>
+            </div>
+        </nav>
+    </div> <!-- /container -->
+</section>
+<!-- Main content -->
+<section class="content pt-0">
+    <div class="container">
+        <div class="container">
+        @foreach($products as $product_category)
+            <!--<div class="row">
+            <!--    <div class="col-md-12">
+            <!--        <h2 class="page-header" id="category{{$product_category->first()->category->id ?? 0}}">{{$product_category->first()->category->name ?? 'Uncategorized'}}</h2>
+            <!--    </div>-->
+            </div>
+            <div class="row eq-height-row">
+            @foreach($product_category as $product)
+                <div class="col-md-3 col-sm-4 col-xs-6 eq-height-col">
+                    <div class="box box-solid product-box">
+                        <div class="box-body">
+                            <a href="#" class="show-product-details" data-href="{{action([\Modules\ProductCatalogue\Http\Controllers\ProductCatalogueController::class, 'show'],  [$business->id, $product->id])}}?location_id={{$business_location->id}}">
+                            <img src="{{$product->image_url}}" class="img-responsive catalogue"></a>
+                
+                            @php
+                                $discount = $discounts->firstWhere('brand_id', $product->brand_id);
+                                if(empty($discount)){
+                                    $discount = $discounts->firstWhere('category_id', $product->category_id);
+                                }
+                            @endphp
+                
+                            @if(!empty($discount))
+                                <span class="label label-warning discount-badge">- {{($discount->discount_amount)}}%</span>
+                            @endif
+                
+                            @php
+                                $max_price = $product->variations->max('sell_price_inc_tax');
+                                $min_price = $product->variations->min('sell_price_inc_tax');
+                            @endphp
+                            
+                            <h2 class="catalogue-title">
+                                <a href="#" class="show-product-details" data-href="{{action([\Modules\ProductCatalogue\Http\Controllers\ProductCatalogueController::class, 'show'],  [$business->id, $product->id])}}?location_id={{$business_location->id}}">
+                                    {{$product->name}}
+                                </a>
+                            </h2>
+                            
+                            <table class="table no-border product-info-table">
+                                <tr>
+                                    <th class="pb-0"> @lang('lang_v1.price'):</th>
+                                    <td class="pb-0">
+                                        <span class="display_currency" data-currency_symbol="true">{{($max_price)}}</span> 
+                                        @if($max_price != $min_price) - <span class="display_currency" data-currency_symbol="true">{{($min_price)}}</span> @endif
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <th class="pb-0"> @lang('product.sku'):</th>
+                                    <td class="pb-0">{{$product->sku}}</td>
+                                </tr>
+                                
+                                @if($product->type == 'variable')
+                                    @php
+                                        $variations = $product->variations->groupBy('product_variation_id');
+                                    @endphp
+                                    @foreach($variations as $product_variation)
+                                        <tr>
+                                            <th>{{$product_variation->first()->product_variation->name}}:</th>
+                                            <td>
+                                                <select class="form-control input-sm variation-select" data-product-id="{{$product->id}}">
+                                                @foreach($product_variation as $variation)
+                                                    <option value="{{$variation->id}}" data-price="{{$variation->sell_price_inc_tax}}">
+                                                        {{$variation->name}} ({{$variation->sub_sku}}) - <span class="display_currency" data-currency_symbol="true">{{$variation->sell_price_inc_tax}}</span>
+                                                    </option>
+                                                @endforeach
+                                                </select>
+                                            </td>
+                                        </tr>
+                                    @endforeach
+                                @endif
+                           
+                                @if (($product->stock < 0 || empty($product->stock)) && $product->enable_stock)
+                                    <tr>
+                                        <td colspan="2">
+                                            <small class="text-muted">@lang('productcatalogue::lang.out_of_stock')</small>
+                                        </td>
+                                    </tr>
+                                @endif
+                            </table>
+                
+                            {{-- NOUVEAU : Bouton Commander --}}
+                            @if (($product->stock > 0 || !$product->enable_stock))
+                                <button class="btn btn-add-to-cart" 
+                                        data-product-id="{{$product->id}}"
+                                        data-product-name="{{$product->name}}"
+                                        data-product-image="{{$product->image_url}}"
+                                        data-product-price="{{$min_price}}"
+                                        data-product-sku="{{$product->sku}}"
+                                        data-product-type="{{$product->type}}"
+                                        data-variation-id="{{$product->variations->first()->id ?? null}}">
+                                    <i class="fas fa-shopping-cart"></i> Ajouter au panier
+                                </button>
+                            @else
+                                <button class="btn btn-add-to-cart" disabled>
+                                    <i class="fas fa-times-circle"></i> Rupture de stock
+                                </button>
+                            @endif
+                        </div>
+                    </div>
+                </div>
+            @if($loop->iteration%4 == 0)
+                <div class="clearfix"></div>
+            @endif
+            @endforeach
+            </div>
+        @endforeach
+    </div>
+    <div class='scrolltop no-print'>
+        <div class='scroll icon'><i class="fas fa-angle-up"></i></div>
+    </div>
+</section>
+<!-- /.content -->
+<!-- Add currency related field-->
+<input type="hidden" id="__code" value="{{$business->currency->code}}">
+<input type="hidden" id="__symbol" value="{{$business->currency->symbol}}">
+<input type="hidden" id="__thousand" value="{{$business->currency->thousand_separator}}">
+<input type="hidden" id="__decimal" value="{{$business->currency->decimal_separator}}">
+<input type="hidden" id="__symbol_placement" value="{{$business->currency->currency_symbol_placement}}">
+<input type="hidden" id="__precision" value="{{$business->currency_precision}}">
+<input type="hidden" id="__quantity_precision" value="{{$business->quantity_precision}}">
+<div class="modal fade product_modal" tabindex="-1" role="dialog" 
+    aria-labelledby="gridSystemModalLabel">
+</div>
+<style>
+/* Bouton Commander */
+.btn-add-to-cart {
+    width: 100%;
+    background-color: #000;
+    color: white;
+    border: none;
+    padding: 10px;
+    font-weight: bold;
+    border-radius: 5px;
+    transition: all 0.3s;
+    margin-top: 10px;
+}
+
+.btn-add-to-cart:hover {
+    background-color: #218838;
+    color: white;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+}
+
+.btn-add-to-cart:disabled {
+    background-color: #6c757d;
+    cursor: not-allowed;
+}
+
+/* Panier flottant */
+.floating-cart {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    z-index: 9999;
+    background-color: #28a745;
+    color: white;
+    border-radius: 50%;
+    width: 60px;
+    height: 60px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    transition: all 0.3s;
+}
+
+.floating-cart:hover {
+    transform: scale(1.1);
+    box-shadow: 0 6px 16px rgba(0,0,0,0.4);
+}
+
+.floating-cart i {
+    font-size: 24px;
+}
+
+.cart-badge {
+    position: absolute;
+    top: -5px;
+    right: -5px;
+    background-color: #dc3545;
+    color: white;
+    border-radius: 50%;
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: bold;
+    border: 2px solid white;
+}
+
+/* Modal panier */
+.cart-modal {
+    display: none;
+    position: fixed;
+    z-index: 10000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0,0,0,0.5);
+}
+
+.cart-modal-content {
+    background-color: white;
+    margin: 5% auto;
+    padding: 0;
+    border-radius: 10px;
+    width: 90%;
+    max-width: 600px;
+    max-height: 80vh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+.cart-modal-header {
+    padding: 20px;
+    background-color: #28a745;
+    color: white;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.cart-modal-header h3 {
+    margin: 0;
+    color: white;
+}
+
+.cart-close {
+    color: white;
+    font-size: 28px;
+    font-weight: bold;
+    cursor: pointer;
+    background: none;
+    border: none;
+}
+
+.cart-close:hover {
+    color: #f0f0f0;
+}
+
+.cart-modal-body {
+    padding: 20px;
+    overflow-y: auto;
+    flex: 1;
+}
+
+.cart-item {
+    display: flex;
+    gap: 15px;
+    padding: 15px;
+    border-bottom: 1px solid #eee;
+    align-items: center;
+}
+
+.cart-item-image {
+    width: 80px;
+    height: 80px;
+    object-fit: cover;
+    border-radius: 5px;
+}
+
+.cart-item-details {
+    flex: 1;
+}
+
+.cart-item-name {
+    font-weight: bold;
+    margin-bottom: 5px;
+}
+
+.cart-item-price {
+    color: #28a745;
+    font-weight: bold;
+}
+
+.cart-item-quantity {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 10px;
+}
+
+.qty-btn {
+    background-color: #f0f0f0;
+    border: none;
+    width: 30px;
+    height: 30px;
+    border-radius: 5px;
+    cursor: pointer;
+    font-weight: bold;
+}
+
+.qty-btn:hover {
+    background-color: #e0e0e0;
+}
+
+.qty-input {
+    width: 50px;
+    text-align: center;
+    border: 1px solid #ddd;
+    border-radius: 5px;
+    padding: 5px;
+}
+
+.cart-item-remove {
+    background-color: #dc3545;
+    color: white;
+    border: none;
+    padding: 5px 10px;
+    border-radius: 5px;
+    cursor: pointer;
+}
+
+.cart-item-remove:hover {
+    background-color: #c82333;
+}
+
+.cart-modal-footer {
+    padding: 20px;
+    background-color: #f8f9fa;
+    border-top: 1px solid #ddd;
+}
+
+.cart-total {
+    font-size: 20px;
+    font-weight: bold;
+    margin-bottom: 15px;
+    display: flex;
+    justify-content: space-between;
+}
+
+.cart-actions {
+    display: flex;
+    gap: 10px;
+}
+
+.btn-checkout {
+    flex: 1;
+    background-color: #28a745;
+    color: white;
+    border: none;
+    padding: 12px;
+    border-radius: 5px;
+    font-weight: bold;
+    cursor: pointer;
+}
+
+.btn-checkout:hover {
+    background-color: #218838;
+}
+
+.btn-continue {
+    flex: 1;
+    background-color: #6c757d;
+    color: white;
+    border: none;
+    padding: 12px;
+    border-radius: 5px;
+    font-weight: bold;
+    cursor: pointer;
+}
+
+.btn-continue:hover {
+    background-color: #5a6268;
+}
+
+.empty-cart {
+    text-align: center;
+    padding: 40px 20px;
+    color: #999;
+}
+
+.empty-cart i {
+    font-size: 64px;
+    margin-bottom: 20px;
+}
+
+.product-box {
+    transition: all 0.3s;
+}
+
+.product-box:hover {
+    box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+}
+
+/* Amélioration Grid Mobile */
+@media (max-width: 767px) {
+    .product-box {
+        margin-bottom: 15px;
+    }
+    
+    .product-box .box-body {
+        padding: 10px;
+    }
+    
+    .product-box img.catalogue {
+        width: 100%;
+        height: 150px;
+        object-fit: cover;
+        border-radius: 8px;
+    }
+    
+    .catalogue-title {
+        font-size: 14px;
+        min-height: 40px;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+    }
+    
+    .product-info-table {
+        font-size: 12px;
+    }
+    
+    .product-info-table th,
+    .product-info-table td {
+        padding: 3px !important;
+    }
+    
+    .btn-add-to-cart {
+        font-size: 13px;
+        padding: 8px;
+    }
+    
+    /* Espacer correctement les produits */
+    .col-xs-6 {
+        padding-left: 7px;
+        padding-right: 7px;
+    }
+    
+    .eq-height-row {
+        margin-left: -7px;
+        margin-right: -7px;
+    }
+}
+
+/* Tablette */
+@media (min-width: 768px) and (max-width: 991px) {
+    .product-box img.catalogue {
+        height: 180px;
+        object-fit: cover;
+    }
+}
+</style>
+@stop
+
+<style>
+.btn-add-to-cart {
+    width: 100%;
+    background-color: #28a745;
+    color: white;
+    border: none;
+    padding: 10px;
+    font-weight: bold;
+    border-radius: 5px;
+    transition: all 0.3s;
+    margin-top: 10px;
+}
+
+.btn-add-to-cart:hover {
+    background-color: #218838;
+    color: white;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+}
+
+.btn-add-to-cart:disabled {
+    background-color: #6c757d;
+    cursor: not-allowed;
+}
+
+.product-box {
+    transition: all 0.3s;
+}
+
+.product-box:hover {
+    box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+}
+
+/* Styles existants... */
+
+/* NOUVEAU - Barre de recherche intégrée dans la navbar */
+.search-container {
+    display: none; /* On cache l'ancienne barre */
+}
+
+/* Intégrer la recherche dans la navbar existante */
+.navbar-default {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 15px !important;
+}
+
+.navbar-default .container-fluid {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    gap: 15px;
+}
+
+.search-in-navbar {
+    flex: 1;
+    max-width: 500px;
+    position: relative;
+}
+
+.search-input-navbar {
+    width: 100%;
+    padding: 10px 40px 10px 15px;
+    border: 1px solid #ddd;
+    border-radius: 25px;
+    font-size: 14px;
+    transition: all 0.3s;
+    background-color: #f8f9fa;
+}
+
+.search-input-navbar:focus {
+    outline: none;
+    border-color: #28a745;
+    background-color: white;
+    box-shadow: 0 0 0 3px rgba(40, 167, 69, 0.1);
+}
+
+.clear-search-navbar {
+    position: absolute;
+    right: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    background-color: #6c757d;
+    color: white;
+    border: none;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    cursor: pointer;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.3s;
+    font-size: 12px;
+}
+
+.clear-search-navbar.active {
+    display: flex;
+}
+
+.clear-search-navbar:hover {
+    background-color: #5a6268;
+}
+
+@media (max-width: 768px) {
+    .navbar-default .container-fluid {
+        flex-wrap: wrap;
+    }
+    
+    .search-in-navbar {
+        order: 3;
+        width: 100%;
+        max-width: 100%;
+        margin-top: 10px;
+    }
+    
+    .navbar-header {
+        order: 1;
+    }
+    
+    .navbar-toggle {
+        order: 2;
+    }
+}
+
+.search-results-info {
+    text-align: center;
+    padding: 15px;
+    background: #d4edda;
+    border-radius: 10px;
+    margin: 20px 0;
+    color: #155724;
+    font-weight: bold;
+    display: none;
+}
+
+.search-results-info.active {
+    display: block;
+}
+
+.no-results {
+    text-align: center;
+    padding: 60px 20px;
+    display: none;
+}
+
+.no-results.active {
+    display: block;
+}
+
+.no-results i {
+    font-size: 64px;
+    color: #ccc;
+    margin-bottom: 20px;
+}
+
+.no-results h3 {
+    color: #666;
+    margin-bottom: 10px;
+}
+
+.no-results p {
+    color: #999;
+}
+
+/* Highlight du texte recherché */
+.highlight {
+    background-color: #fff3cd;
+    padding: 2px 4px;
+    border-radius: 3px;
+    font-weight: bold;
+}
+
+/* Animation produit caché */
+.product-hidden {
+    display: none !important;
+}
+
+@media (max-width: 768px) {
+    .search-container {
+        padding: 15px;
+        margin: 15px;
+    }
+    
+    .search-box {
+        flex-direction: column;
+    }
+    
+    .search-btn, .clear-search {
+        width: 100%;
+    }
+    
+    .search-input {
+        font-size: 14px;
+    }
+}
+
+</style>
+@section('javascript')
+<script type="text/javascript">
+(function($) {
+    var businessId = "{{$business->id}}";
+    var locationId = "{{$business_location->id}}";
+    var baseUrl = "{{url('/catalogue')}}" + "/" + businessId + "/" + locationId;
+
+    $(document).ready(function() {
+        // Configuration des devises
+        __currency_symbol = $('input#__symbol').val();
+        __currency_thousand_separator = $('input#__thousand').val();
+        __currency_decimal_separator = $('input#__decimal').val();
+        __currency_symbol_placement = $('input#__symbol_placement').val();
+        __currency_precision = $('input#__precision').length > 0 ? $('input#__precision').val() : 2;
+        __quantity_precision = $('input#__quantity_precision').length > 0 ? $('input#__quantity_precision').val() : 2;
+
+        __currency_convert_recursively($('.content'));
+
+        // Charger le panier au démarrage
+        loadCartCount();
+        // NOUVEAU - Stocker table_id en session si présent
+        @if(!empty($table))
+            sessionStorage.setItem('current_table_id', '{{$table->id}}');
+            sessionStorage.setItem('current_table_name', '{{$table->name}}');
+        @endif
+
+        // Ajouter au panier
+        $(document).on('click', '.btn-add-to-cart', function(e) {
+            e.preventDefault();
+            
+            var $btn = $(this);
+            var productId = $btn.data('product-id');
+            var productType = $btn.data('product-type');
+            var variationId = $btn.data('variation-id'); // ✅ Récupérer depuis data-attribute
+            
+            // Si produit variable, récupérer la variation sélectionnée depuis le select
+            if (productType == 'variable') {
+                var $select = $btn.closest('.product-box').find('.variation-select');
+                if ($select.length > 0) {
+                    variationId = $select.val();
+                }
+            }
+            
+            // Animation du bouton
+            var originalHtml = $btn.html();
+            $btn.html('<i class="fas fa-spinner fa-spin"></i> Ajout...').prop('disabled', true);
+            
+            // Appel AJAX
+            $.ajax({
+                url: baseUrl + '/cart/add',
+                method: 'POST',
+                data: {
+                    _token: '{{csrf_token()}}',
+                    product_id: productId,
+                    variation_id: variationId,
+                    quantity: 1
+                },
+                success: function(response) {
+                    if (response.success) {
+                        // Mise à jour du badge
+                        $('#cartBadge').text(response.cart_count);
+                        
+                        // Animation de succès
+                        $btn.html('<i class="fas fa-check"></i> Ajouté !');
+                        $btn.css('background-color', '#28a745');
+                        
+                        // Remettre le bouton à la normale après 2 secondes
+                        setTimeout(function() {
+                            $btn.html(originalHtml).prop('disabled', false).css('background-color', '');
+                        }, 2000);
+                    }
+                },
+                error: function() {
+                    alert('Erreur lors de l\'ajout au panier');
+                    $btn.html(originalHtml).prop('disabled', false);
+                }
+            });
+        });
+
+        // Ouvrir le modal panier
+        $('#floatingCart').on('click', function() {
+            openCartModal();
+        });
+
+        // Fermer le modal
+        $('#closeCartModal').on('click', function() {
+            $('#cartModal').fadeOut();
+        });
+
+        // Fermer en cliquant en dehors
+        $(window).on('click', function(e) {
+            if ($(e.target).is('#cartModal')) {
+                $('#cartModal').fadeOut();
+            }
+        });
+
+        // Mettre à jour la quantité
+        $(document).on('click', '.qty-btn', function() {
+            var $btn = $(this);
+            var action = $btn.data('action');
+            var cartKey = $btn.data('cart-key');
+            var $input = $btn.siblings('.qty-input');
+            var currentQty = parseInt($input.val());
+            var newQty = action === 'plus' ? currentQty + 1 : Math.max(1, currentQty - 1);
+
+            updateCartQuantity(cartKey, newQty);
+        });
+
+        // Supprimer un article
+        $(document).on('click', '.cart-item-remove', function() {
+            var cartKey = $(this).data('cart-key');
+            removeFromCart(cartKey);
+        });
+
+        // Afficher les détails du produit
+        $(document).on('click', '.show-product-details', function(e) {
+            e.preventDefault();
+            $.ajax({
+                url: $(this).data('href'),
+                dataType: 'html',
+                success: function(result) {
+                    $('.product_modal').html(result).modal('show');
+                    __currency_convert_recursively($('.product_modal'));
+                },
+            });
+        });
+
+        // Navigation par catégories
+        $(document).on('click', '.menu', function(e) {
+            e.preventDefault();
+            $('.navbar-toggle').addClass('collapsed');
+            $('.navbar-collapse').removeClass('in');
+
+            var cat_id = $(this).attr('href');
+            if ($(cat_id).length) {
+                $('html, body').animate({
+                    scrollTop: $(cat_id).offset().top
+                }, 1000);
+            }
+        });
+    });
+
+    // Fonction pour charger le compteur du panier
+    function loadCartCount() {
+        $.ajax({
+            url: baseUrl + '/cart/get',
+            method: 'GET',
+            success: function(response) {
+                if (response.success) {
+                    $('#cartBadge').text(response.cart_count);
+                }
+            }
+        });
+    }
+
+    // Fonction pour ouvrir le modal panier
+    function openCartModal() {
+        $.ajax({
+            url: baseUrl + '/cart/get',
+            method: 'GET',
+            success: function(response) {
+                if (response.success) {
+                    renderCartModal(response.cart);
+                    $('#cartModal').fadeIn();
+                }
+            }
+        });
+    }
+
+    // Fonction pour afficher le contenu du panier
+    function renderCartModal(cart) {
+        var $body = $('#cartModalBody');
+        var $footer = $('#cartModalFooter');
+        
+        if (Object.keys(cart).length === 0) {
+            $body.html(`
+                <div class="empty-cart">
+                    <i class="fas fa-shopping-cart"></i>
+                    <p>Votre panier est vide</p>
+                </div>
+            `);
+            $footer.html('');
+            return;
+        }
+
+        var html = '';
+        var total = 0;
+
+        $.each(cart, function(key, item) {
+            var subtotal = item.price * item.quantity;
+            total += subtotal;
+
+            html += `
+                <div class="cart-item">
+                    <img src="${item.image}" class="cart-item-image" alt="${item.name}">
+                    <div class="cart-item-details">
+                        <div class="cart-item-name">${item.name}</div>
+                        <div class="cart-item-price">
+                            <span class="display_currency" data-currency_symbol="true">${item.price}</span>
+                        </div>
+                        <div class="cart-item-quantity">
+                            <button class="qty-btn" data-action="minus" data-cart-key="${key}">-</button>
+                            <input type="number" class="qty-input" value="${item.quantity}" readonly>
+                            <button class="qty-btn" data-action="plus" data-cart-key="${key}">+</button>
+                            <button class="cart-item-remove" data-cart-key="${key}">
+                                <i class="fas fa-trash"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+        });
+
+        $body.html(html);
+
+        $footer.html(`
+            <div class="cart-total">
+                <span>Total:</span>
+                <span class="display_currency" data-currency_symbol="true">${total}</span>
+            </div>
+            <div class="cart-actions">
+                <button class="btn-continue" id="continueShoppingBtn">
+                    <i class="fas fa-arrow-left"></i> Continuer
+                </button>
+                <button class="btn-checkout" id="checkoutBtn">
+                    <i class="fas fa-check-circle"></i> Commander
+                </button>
+            </div>
+        `);
+
+        __currency_convert_recursively($body);
+        __currency_convert_recursively($footer);
+
+        // Continuer les achats
+        $('#continueShoppingBtn').on('click', function() {
+            $('#cartModal').fadeOut();
+        });
+
+        // Aller au checkout
+        $('#checkoutBtn').on('click', function() {
+            var checkoutUrl = baseUrl + '/checkout';
+            
+            // Récupérer table_id du sessionStorage
+            var tableId = sessionStorage.getItem('current_table_id');
+            if (tableId) {
+                checkoutUrl += '?table_id=' + tableId;
+            }
+            
+            window.location.href = checkoutUrl;
+        });
+    }
+
+    // Fonction pour mettre à jour la quantité
+    function updateCartQuantity(cartKey, quantity) {
+        $.ajax({
+            url: baseUrl + '/cart/update',
+            method: 'POST',
+            data: {
+                _token: '{{csrf_token()}}',
+                cart_key: cartKey,
+                quantity: quantity
+            },
+            success: function(response) {
+                if (response.success) {
+                    $('#cartBadge').text(response.cart_count);
+                    renderCartModal(response.cart);
+                }
+            }
+        });
+    }
+
+    // Fonction pour supprimer du panier
+    function removeFromCart(cartKey) {
+        if (confirm('Voulez-vous vraiment supprimer cet article ?')) {
+            $.ajax({
+                url: baseUrl + '/cart/remove',
+                method: 'POST',
+                data: {
+                    _token: '{{csrf_token()}}',
+                    cart_key: cartKey
+                },
+                success: function(response) {
+                    if (response.success) {
+                        $('#cartBadge').text(response.cart_count);
+                        renderCartModal(response.cart);
+                    }
+                }
+            });
+        }
+    }
+
+    // Scroll animation
+    $(window).scroll(function() {
+        var height = $(window).scrollTop();
+        if(height  > 180) {
+            $('nav').addClass('navbar-fixed-top');
+            $('.scrolltop:hidden').stop(true, true).fadeIn();
+        } else {
+            $('nav').removeClass('navbar-fixed-top');
+            $('.scrolltop').stop(true, true).fadeOut();
+        }
+    });
+
+    $(document).on('click', '.scroll', function(e){
+        $("html,body").animate({scrollTop:$("#top").offset().top},"1000");
+        return false;
+    });
+    function initProductSearch() {
+    var $searchInput = $('#productSearchNavbar');
+    var $clearBtn = $('#clearSearchNavbar');
+    var $searchInfo = $('#searchResultsInfo');
+    var $noResults = $('#noResults');
+    var searchTimeout;
+
+    // Fonction de recherche dynamique
+    function performSearch() {
+        var searchTerm = $searchInput.val().toLowerCase().trim();
+        
+        if (searchTerm === '') {
+            clearSearch();
+            return;
+        }
+
+        var foundCount = 0;
+        var $allProducts = $('.product-box').parent();
+        var $allCategories = $('.page-header');
+
+        // Cacher tous les produits et catégories
+        $allProducts.addClass('product-hidden');
+        $allCategories.parent().addClass('product-hidden');
+
+        // Parcourir tous les produits
+        $allProducts.each(function() {
+            var $productContainer = $(this);
+            var $product = $productContainer.find('.product-box');
+            var productName = $product.find('.catalogue-title a').text().toLowerCase();
+            var productSku = $product.find('td:contains("SKU")').next().text().toLowerCase();
+            var categoryName = $productContainer.closest('.row').prev().find('.page-header').text().toLowerCase();
+
+            // Vérifier si le terme de recherche correspond
+            if (productName.includes(searchTerm) || 
+                productSku.includes(searchTerm) || 
+                categoryName.includes(searchTerm)) {
+                
+                // Afficher le produit
+                $productContainer.removeClass('product-hidden');
+                
+                // Afficher la catégorie parente
+                $productContainer.closest('.row').prev().removeClass('product-hidden');
+                
+                foundCount++;
+
+                // Highlight le texte trouvé
+                highlightText($product.find('.catalogue-title a'), searchTerm);
+            }
+        });
+
+        // Afficher les résultats
+        if (foundCount > 0) {
+            $searchInfo.addClass('active').html(
+                '<i class="fas fa-check-circle"></i> ' + 
+                foundCount + ' produit(s) trouvé(s)'
+            );
+            $noResults.removeClass('active');
+            $clearBtn.addClass('active');
+        } else {
+            $searchInfo.removeClass('active');
+            $noResults.addClass('active');
+            $clearBtn.addClass('active');
+        }
+    }
+
+    // Fonction pour surligner le texte
+    function highlightText($element, term) {
+        var text = $element.text();
+        var regex = new RegExp('(' + term + ')', 'gi');
+        var newText = text.replace(regex, '<span class="highlight">$1</span>');
+        $element.html(newText);
+    }
+
+    // Fonction pour effacer la recherche
+    function clearSearch() {
+        $searchInput.val('');
+        $('.product-box').parent().removeClass('product-hidden');
+        $('.page-header').parent().removeClass('product-hidden');
+        $searchInfo.removeClass('active');
+        $noResults.removeClass('active');
+        $clearBtn.removeClass('active');
+        
+        // Retirer les highlights
+        $('.catalogue-title a').each(function() {
+            var text = $(this).text();
+            $(this).text(text);
+        });
+    }
+
+    // Recherche dynamique en temps réel (debounced)
+    $searchInput.on('input', function() {
+        clearTimeout(searchTimeout);
+        
+        if ($(this).val() === '') {
+            clearSearch();
+            return;
+        }
+        
+        // Attendre 500ms après que l'utilisateur arrête de taper
+        searchTimeout = setTimeout(function() {
+            performSearch();
+        }, 500);
+    });
+
+    // Effacer la recherche
+    $clearBtn.on('click', function() {
+        clearSearch();
+        $searchInput.focus();
+    });
+}
+
+// Initialiser la recherche au chargement
+$(document).ready(function() {
+    // ... code existant ...
+    
+    // Initialiser la recherche
+    initProductSearch();
+});
+
+})(jQuery);
+</script>
+@endsection

@@ -1,0 +1,11 @@
+{
+    "name": "Multiservices",
+    "alias": "multiservices",
+    "description": "",
+    "keywords": [],
+    "priority": 0,
+    "providers": [
+        "Modules\\Multiservices\\Providers\\MultiservicesServiceProvider"
+    ],
+    "files": []
+}

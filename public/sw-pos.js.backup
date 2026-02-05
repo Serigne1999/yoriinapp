@@ -1,0 +1,169 @@
+const CACHE_VERSION = 'v1.0.1';
+const CACHE_NAME = 'yoriinapp-pos-' + CACHE_VERSION;
+const RUNTIME_CACHE = 'yoriinapp-runtime';
+
+// Assets critiques à cacher
+const CRITICAL_ASSETS = [
+    '/',
+    '/pos/sell',
+    '/css/app.css',
+    '/js/app.js',
+    '/js/vendor.js',
+    '/offline.html'
+];
+
+// Installation
+self.addEventListener('install', event => {
+    console.log('📦 SW Installing...', CACHE_VERSION);
+    event.waitUntil(
+        caches.open(CACHE_NAME)
+            .then(cache => {
+                console.log('✅ Caching critical assets');
+                return cache.addAll(CRITICAL_ASSETS);
+            })
+            .then(() => self.skipWaiting())
+            .catch(err => console.error('❌ Cache failed:', err))
+    );
+});
+
+// Activation
+self.addEventListener('activate', event => {
+    console.log('🔄 SW Activating...');
+    event.waitUntil(
+        caches.keys()
+            .then(keys => {
+                return Promise.all(
+                    keys.map(key => {
+                        if (key !== CACHE_NAME && key !== RUNTIME_CACHE) {
+                            console.log('🗑️ Deleting old cache:', key);
+                            return caches.delete(key);
+                        }
+                    })
+                );
+            })
+            .then(() => self.clients.claim())
+    );
+});
+
+// Stratégie Fetch : Network First pour API, Cache First pour assets
+self.addEventListener('fetch', event => {
+    const url = new URL(event.request.url);
+    
+    // Ignorer chrome-extension et autres
+    if (!url.protocol.startsWith('http')) {
+        return;
+    }
+    
+    // IGNORER /pos-offline complètement
+    if (url.pathname.includes('/pos-offline')) {
+        return;
+    }
+    
+    // IGNORER les requêtes qui échouent souvent
+    if (url.pathname.includes('/check-new-orders') || 
+        url.pathname.includes('/get-total-unread')) {
+        return;
+    }
+    
+    // API - Network First avec cache fallback
+    if (url.pathname.includes('/api/') || 
+        url.pathname.includes('/products/') ||
+        url.pathname.includes('/pos/')) {
+        
+        event.respondWith(
+            fetch(event.request)
+                .then(response => {
+                    // Clone et cache
+                    const clone = response.clone();
+                    caches.open(RUNTIME_CACHE).then(cache => {
+                        cache.put(event.request, clone);
+                    });
+                    return response;
+                })
+                .catch(() => {
+                    // Fallback sur cache si offline
+                    return caches.match(event.request);
+                })
+        );
+    }
+    // Assets statiques - Cache First
+    else {
+        event.respondWith(
+            caches.match(event.request)
+                .then(response => {
+                    return response || fetch(event.request);
+                })
+        );
+    }
+});
+// Background Sync - Synchroniser ventes en attente
+self.addEventListener('sync', event => {
+    if (event.tag === 'sync-sales') {
+        console.log('🔄 Syncing pending sales...');
+        event.waitUntil(syncPendingSales());
+    }
+});
+
+async function syncPendingSales() {
+    try {
+        const db = await openDB();
+        const tx = db.transaction('pending_sales', 'readonly');
+        const sales = await getAllFromStore(tx.objectStore('pending_sales'));
+        
+        console.log(`📤 Found ${sales.length} pending sales`);
+        
+        for (const sale of sales) {
+            try {
+                const response = await fetch('/pos/store', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRF-TOKEN': sale.csrf_token
+                    },
+                    body: JSON.stringify(sale.data)
+                });
+                
+                if (response.ok) {
+                    // Supprimer de pending
+                    const delTx = db.transaction('pending_sales', 'readwrite');
+                    await delTx.objectStore('pending_sales').delete(sale.id);
+                    console.log('✅ Sale synced:', sale.id);
+                }
+            } catch (e) {
+                console.error('❌ Sync failed for sale:', sale.id, e);
+            }
+        }
+    } catch (err) {
+        console.error('❌ Sync error:', err);
+    }
+}
+
+function openDB() {
+    return new Promise((resolve, reject) => {
+        const req = indexedDB.open('YoriinAppPOS', 1);
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+        req.onupgradeneeded = (e) => {
+            const db = e.target.result;
+            if (!db.objectStoreNames.contains('pending_sales')) {
+                const store = db.createObjectStore('pending_sales', { 
+                    keyPath: 'id', 
+                    autoIncrement: true 
+                });
+                store.createIndex('timestamp', 'timestamp', { unique: false });
+            }
+            if (!db.objectStoreNames.contains('products')) {
+                const prodStore = db.createObjectStore('products', { keyPath: 'id' });
+                prodStore.createIndex('sku', 'sku', { unique: false });
+            }
+        };
+    });
+}
+
+function getAllFromStore(store) {
+    return new Promise((resolve, reject) => {
+        const req = store.getAll();
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+    });
+}

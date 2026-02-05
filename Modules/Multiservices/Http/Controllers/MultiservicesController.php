@@ -1,0 +1,668 @@
+<?php
+
+namespace Modules\Multiservices\Http\Controllers;
+
+use Modules\Multiservices\Entities\TransactionType;
+use Illuminate\Http\Request;
+use Modules\Multiservices\Entities\MultiservicesCashRegister;
+use Modules\Multiservices\Entities\MultiservicesCashTransaction;
+//use Modules\Multiservices\Utils\CashRegisterHelper;
+use Illuminate\Routing\Controller;
+use Modules\Multiservices\Entities\CashRegister;
+use Illuminate\Validation\Rule;
+use Modules\Multiservices\Entities\MultiserviceTransaction;
+use Modules\Multiservices\Entities\MultiserviceCommission;
+use Modules\Multiservices\Entities\OperatorAccount;
+use Modules\Multiservices\Entities\OperatorAccountTransaction;
+use Yajra\DataTables\Facades\DataTables;
+use DB;
+
+class MultiservicesController extends Controller
+{
+    public function index(Request $request)
+    {
+        if (!auth()->user()->can('multiservices.view')) {
+            abort(403, 'Accès non autorisé');
+        }
+    
+        $businessId = auth()->user()->business_id;
+    
+        if ($request->ajax()) {
+            $transactions = MultiserviceTransaction::forBusiness($businessId)
+                ->with(['user', 'location']) // ⭐ Ajouter 'location'
+                ->select('multiservice_transactions.*');
+    
+            // Filtres
+            if ($request->operator) {
+                $transactions->where('operator', $request->operator);
+            }
+            if ($request->transaction_type) {
+                $transactions->where('transaction_type', $request->transaction_type);
+            }
+            if ($request->status) {
+                $transactions->where('status', $request->status);
+            }
+            if ($request->reference) {
+                $transactions->where('reference_number', 'like', '%' . $request->reference . '%');
+            }
+            if ($request->location_id) {
+                $transactions->where('location_id', $request->location_id);
+            }
+            if ($request->start_date && $request->end_date) {
+                $transactions->whereBetween('created_at', [
+                    $request->start_date . ' 00:00:00',
+                    $request->end_date . ' 23:59:59'
+                ]);
+            }
+    
+            return DataTables::of($transactions)
+                ->addColumn('action', function ($row) {
+                    $html = '<div class="btn-group">';
+                    $html .= '<button class="btn btn-xs btn-primary dropdown-toggle" data-toggle="dropdown">Action <span class="caret"></span></button>';
+                    $html .= '<ul class="dropdown-menu">';
+                    
+                    if (auth()->user()->can('multiservices.view')) {
+                        $html .= '<li><a href="' . action('\Modules\Multiservices\Http\Controllers\MultiservicesController@show', $row->id) . '"><i class="fa fa-eye"></i> Voir</a></li>';
+                    }
+                    
+                    if (auth()->user()->can('multiservices.update') && $row->canBeModified()) {
+                        $html .= '<li><a href="' . action('\Modules\Multiservices\Http\Controllers\MultiservicesController@edit', $row->id) . '"><i class="fa fa-edit"></i> Modifier</a></li>';
+                        
+                        if ($row->status === 'pending') {
+                            $html .= '<li><a href="#" class="complete-transaction" data-id="' . $row->id . '"><i class="fa fa-check"></i> Compléter</a></li>';
+                        }
+                    
+                    }
+                    // ⭐ BOUTON ANNULER SÉPARÉ - POUR PENDING ET COMPLETED
+                    if (auth()->user()->can('multiservices.cancel') && in_array($row->status, ['pending', 'completed'])) {
+                        $html .= '<li><a href="#" class="cancel-transaction" data-id="' . $row->id . '"><i class="fa fa-ban"></i> Annuler</a></li>';
+                    }
+                    
+                    if (auth()->user()->can('multiservices.delete') && $row->canBeModified()) {
+                        $html .= '<li><a href="#" class="delete-transaction" data-id="' . $row->id . '"><i class="fa fa-trash"></i> Supprimer</a></li>';
+                    }
+                    
+                    $html .= '</ul></div>';
+                    return $html;
+                })
+                ->addColumn('location', function ($row) {
+                    return $row->location ? $row->location->name : '-';
+                })
+                ->addColumn('type', function ($row) {
+                    return $row->transactionType ? $row->transactionType->name : '-';
+                })
+                ->editColumn('amount', function ($row) {
+                    return '<span class="display_currency" data-currency_symbol="true">' . $row->amount . '</span>';
+                })
+                ->editColumn('fee', function ($row) { // ⭐ AJOUTER formatage des frais
+                    return '<span class="display_currency" data-currency_symbol="true">' . $row->fee . '</span>';
+                })
+                ->editColumn('total', function ($row) { // ⭐ AJOUTER formatage du total
+                    return '<span class="display_currency" data-currency_symbol="true">' . $row->total . '</span>';
+                })
+                ->editColumn('created_at', function ($row) {
+                    return $row->created_at->format('d/m/Y H:i');
+                })
+                ->editColumn('status', function ($row) {
+                    $badges = [
+                        'pending' => 'warning',
+                        'completed' => 'success',
+                        'canceled' => 'default',
+                        'failed' => 'danger'
+                    ];
+                    return '<span class="label label-' . $badges[$row->status] . '">' . ucfirst($row->status) . '</span>';
+                })
+                ->rawColumns(['action', 'amount', 'fee', 'total', 'status', 'type']) // ⭐ Ajouter 'fee' et 'total'
+                ->make(true);
+        }
+    
+        // ⭐ CHARGER LES TYPES DEPUIS LA BASE DE DONNÉES (pas config)
+        $operators = \Modules\Multiservices\Entities\Operator::getOperatorsForBusiness($businessId)
+            ->pluck('name', 'code')
+            ->toArray();
+        
+        $transactionTypes = TransactionType::where('business_id', $businessId)
+                                          ->where('is_active', 1)
+                                          ->orderBy('name')
+                                          ->pluck('name', 'code')
+                                          ->toArray();
+        
+        $locations = \App\BusinessLocation::where('business_id', $businessId) // ⭐ AJOUTER
+            ->pluck('name', 'id')
+            ->toArray();
+        
+        $statuses = config('multiservices.statuses');
+    
+        return view('multiservices::transactions.index', compact('operators', 'transactionTypes', 'statuses', 'locations')); // ⭐ Ajouter 'locations'
+    }
+
+    public function create()
+    {
+        if (!auth()->user()->can('multiservices.create')) {
+            abort(403, 'Accès non autorisé');
+        }
+        
+        $businessId = auth()->user()->business_id;
+        
+        // Charger les opérateurs dynamiques
+        $operators = \Modules\Multiservices\Entities\Operator::getOperatorsForBusiness($businessId)
+            ->pluck('name', 'code')
+            ->toArray();
+        
+        // Charger les locations
+        $locations = \App\BusinessLocation::where('business_id', $businessId)
+            ->pluck('name', 'id')
+            ->toArray();
+        
+        // Charger les types de transactions depuis la base de données
+        $transactionTypes = TransactionType::where('business_id', $businessId)
+                                          ->where('is_active', 1)
+                                          ->orderBy('name')
+                                          ->pluck('name', 'code')
+                                          ->toArray();
+        return view('multiservices::transactions.create', compact(
+            'operators', 
+            'locations', 
+            'transactionTypes' // $accounts supprimé
+        ));
+    }
+    /**
+     * Récupérer les comptes actifs d'un opérateur
+     */
+    public function getAccountsByOperator($operator)
+    {
+        $businessId = auth()->user()->business_id;
+        $locationId = request()->location_id ?? auth()->user()->location_id;
+        
+        $accounts = OperatorAccount::where('business_id', $businessId)
+            ->where('location_id', $locationId)
+            ->where('operator', $operator)
+            ->where('is_active', 1)
+            ->get()
+            ->map(function($account) {
+                return [
+                    'id' => $account->id,
+                    'label' => $account->account_name . ' - ' . $account->account_number . ' (Solde: ' . number_format($account->balance, 0) . ' FCFA)',
+                    'balance' => $account->balance,
+                ];
+            });
+        
+        return response()->json($accounts);
+    }
+    public function store(Request $request)
+    {
+        // ⭐ DÉFINIR $businessId EN PREMIER
+        $businessId = auth()->user()->business_id;
+        
+        // VALIDATION DYNAMIQUE
+        $validated = $request->validate([
+            'operator' => 'required',
+            'operator_account_id' => 'required|exists:operator_accounts,id',
+            'transaction_type' => [
+                'required',
+                'string',
+                function ($attribute, $value, $fail) use ($businessId) {
+                    $exists = TransactionType::where('business_id', $businessId)
+                                            ->where('code', $value)
+                                            ->where('is_active', 1)
+                                            ->exists();
+                    if (!$exists) {
+                        $fail('Le type de transaction sélectionné est invalide.');
+                    }
+                },
+            ],
+            'location_id' => 'required|exists:business_locations,id',
+            'amount' => 'required|numeric|min:1',
+            'sender_name' => 'nullable|string|max:255',
+            'sender_phone' => 'nullable|string|max:50',
+            'receiver_name' => 'nullable|string|max:255',
+            'receiver_phone' => 'nullable|string|max:50',
+            'notes' => 'nullable|string',
+        ]);
+        // ⭐ RÉCUPÉRER L'ID DU TYPE À PARTIR DU CODE
+        $transactionType = TransactionType::where('business_id', $businessId)
+                                          ->where('code', $request->transaction_type)
+                                          ->where('is_active', 1)
+                                          ->first();
+        
+        if (!$transactionType) {
+            return redirect()->back()->with('error', 'Type de transaction invalide.')->withInput();
+        }
+        
+        $typeId = $transactionType->id;
+        try {
+            DB::beginTransaction();
+            
+            $amount = (float) str_replace([' ', ','], ['', '.'], $request->amount);
+            $locationId = $request->location_id ?? auth()->user()->location_id;
+            
+            // Calculer la commission
+            $commission = MultiserviceCommission::findApplicable(
+                $businessId,
+                $request->operator,
+                $request->transaction_type,
+                $amount
+            );
+            $fee = $commission ? $commission->calculateCommission($amount) : 0;
+            
+            // Calculer le total selon le type
+            if ($request->transaction_type === 'withdrawal') {
+                $total = $amount - $fee;
+            } else {
+                $total = $amount + $fee;
+            }
+            
+            // ⭐ RÉCUPÉRER LE COMPTE SÉLECTIONNÉ PAR L'UTILISATEUR
+            $account = OperatorAccount::where('id', $request->operator_account_id)
+                ->where('business_id', $businessId)
+                ->where('is_active', 1)
+                ->first();
+    
+            if (!$account) {
+                DB::rollBack();
+                \Log::warning("Aucun compte actif trouvé pour l'opérateur {$request->operator}");
+                return redirect()->back()->with('error', 'Aucun compte actif trouvé pour cet opérateur dans cette location.')->withInput();
+            }
+    
+            // ⭐ VÉRIFIER SOLDE SUFFISANT POUR LES DÉPÔTS
+            if (in_array($request->transaction_type, ['deposit', 'depot'])) {
+                if ($account->balance < $amount) {
+                    DB::rollBack();
+                    return redirect()->back()->with('error', "Solde insuffisant. Solde disponible: " . number_format($account->balance, 0) . " FCFA")->withInput();
+                }
+            }
+            
+            // ⭐ CRÉER LA TRANSACTION MULTISERVICES (DIRECTEMENT EN 'COMPLETED')
+            $transaction = MultiserviceTransaction::create([
+                'business_id' => $businessId,
+                'user_id' => auth()->id(),
+                'location_id' => $locationId,
+                'operator' => $request->operator,
+                'type_id' => $typeId,
+                'transaction_type' => $request->transaction_type,
+                'sender_name' => $request->sender_name,
+                'sender_phone' => $request->sender_phone,
+                'sender_id_number' => $request->sender_id_number,
+                'receiver_name' => $request->receiver_name,
+                'receiver_phone' => $request->receiver_phone,
+                'receiver_id_number' => $request->receiver_id_number,
+                'amount' => $amount,
+                'fee' => $fee,
+                'total' => $total,
+                'profit' => $fee,
+                'status' => 'completed', // ⭐ DIRECTEMENT COMPLETED
+                'notes' => $request->notes,
+                'payment_method' => $request->payment_method,
+            ]);
+            
+            
+            // ⭐ INTÉGRATION AVEC CAISSE MULTISERVICES SÉPARÉE
+            \Log::info('=== INTÉGRATION CAISSE MULTISERVICES ===');
+            
+            $cashRegister = \Modules\Multiservices\Entities\MultiservicesCashRegister::getOrCreateOpen($businessId, $locationId);
+            
+            \Log::info('Caisse Multiservices ID: ' . $cashRegister->id);
+            
+            // Créer mouvements selon type
+            if (in_array($request->transaction_type, ['deposit', 'depot'])) {
+                $cashRegister->addDeposit($amount, $transaction->id, "Dépôt client - Transaction #{$transaction->transaction_number}");
+                \Log::info('✅ Dépôt enregistré dans caisse Multiservices');
+                
+            } elseif (in_array($request->transaction_type, ['withdrawal', 'retrait'])) {
+                $cashRegister->addWithdrawal($amount, $transaction->id, "Retrait client - Transaction #{$transaction->transaction_number}");
+                \Log::info('✅ Retrait enregistré dans caisse Multiservices');
+            }
+            // ⭐ MISE À JOUR AUTOMATIQUE DU SOLDE DU COMPTE OPÉRATEUR
+            try {
+                // DÉPÔT : Agent ENVOIE argent → Solde DIMINUE
+                if (in_array($request->transaction_type, ['deposit', 'depot'])) {
+                    $account->debit(
+                        $amount,
+                        "Dépôt client - Transaction #{$transaction->transaction_number}"
+                    );
+                }
+                
+                // RETRAIT : Agent REÇOIT argent → Solde AUGMENTE
+                elseif (in_array($request->transaction_type, ['withdrawal', 'retrait'])) {
+                    $account->credit(
+                        $amount,
+                        "Retrait client - Transaction #{$transaction->transaction_number}"
+                    );
+                }
+                
+                // TRANSFERT : Gérer les deux comptes (si différents)
+                elseif ($request->transaction_type === 'transfer') {
+                    // Débiter compte source
+                    $account->debit(
+                        $amount,
+                        "Transfert sortant - Transaction #{$transaction->transaction_number}"
+                    );
+                    
+                    // Si compte destination différent, le créditer
+                    if ($request->destination_account_id && $request->destination_account_id != $account->id) {
+                        $destinationAccount = OperatorAccount::find($request->destination_account_id);
+                        if ($destinationAccount) {
+                            $destinationAccount->credit(
+                                $amount,
+                                "Transfert entrant - Transaction #{$transaction->transaction_number}"
+                            );
+                        }
+                    }
+                }
+                
+                \Log::info("✅ Solde compte mis à jour pour transaction #{$transaction->id}");
+                
+            } catch (\Exception $e) {
+                DB::rollBack();
+                \Log::error("❌ Erreur mise à jour solde compte: " . $e->getMessage());
+                return redirect()->back()->with('error', 'Erreur : ' . $e->getMessage())->withInput();
+            }
+            
+            DB::commit();
+            
+            return redirect()->route('multiservices.index')->with('success', 'Transaction créée avec succès');
+            
+        } catch (\Exception $e) {
+            DB::rollBack();
+            \Log::error($e);
+            return redirect()->back()->with('error', 'Erreur : ' . $e->getMessage())->withInput();
+        }
+    }
+    public function transactionType()
+    {
+        return $this->belongsTo(TransactionType::class, 'transaction_type', 'code')
+                    ->where('business_id', $this->business_id);
+    }
+    public function show($id)
+    {
+        if (!auth()->user()->can('multiservices.view')) {
+            abort(403, 'Accès non autorisé');
+        }
+
+        $transaction = MultiserviceTransaction::forBusiness(auth()->user()->business_id)
+            ->with(['user', 'completedBy', 'canceledBy'])
+            ->findOrFail($id);
+
+        return view('multiservices::transactions.show', compact('transaction'));
+    }
+
+    public function edit($id)
+    {
+        if (!auth()->user()->can('multiservices.update')) {
+            abort(403, 'Accès non autorisé');
+        }
+
+        $transaction = MultiserviceTransaction::forBusiness(auth()->user()->business_id)->findOrFail($id);
+
+        if (!$transaction->canBeModified()) {
+            return redirect()->route('multiservices.index')->with('error', 'Cette transaction ne peut plus être modifiée');
+        }
+
+        $operators = \Modules\Multiservices\Entities\Operator::getOperatorsForBusiness($businessId)
+            ->pluck('name', 'code')
+            ->toArray();
+        $transactionTypes = config('multiservices.transaction_types');
+
+        return view('multiservices::transactions.edit', compact('transaction', 'operators', 'transactionTypes'));
+    }
+
+    public function update(Request $request, $id)
+    {
+        if (!auth()->user()->can('multiservices.update')) {
+            abort(403, 'Accès non autorisé');
+        }
+
+        $transaction = MultiserviceTransaction::forBusiness(auth()->user()->business_id)->findOrFail($id);
+
+        if (!$transaction->canBeModified()) {
+            return redirect()->route('multiservices.index')->with('error', 'Cette transaction ne peut plus être modifiée');
+        }
+
+        $request->validate([
+            'amount' => 'required|numeric|min:0',
+        ]);
+
+        try {
+            DB::beginTransaction();
+
+            $amount = (float) str_replace([' ', ','], ['', '.'], $request->amount);
+
+            // Recalculer si le montant a changé
+            if ($amount != $transaction->amount) {
+                $commission = MultiserviceCommission::findApplicable(
+                    $transaction->business_id,
+                    $transaction->operator,
+                    $transaction->transaction_type,
+                    $amount
+                );
+
+                $fee = $commission ? $commission->calculateCommission($amount) : 0;
+                
+                if ($transaction->transaction_type === 'withdrawal') {
+                    $total = $amount - $fee;
+                } else {
+                    $total = $amount + $fee;
+                }
+
+                $transaction->fee = $fee;
+                $transaction->total = $total;
+                $transaction->profit = $fee;
+            }
+
+            $transaction->amount = $amount;
+            $transaction->notes = $request->notes;
+            $transaction->save();
+
+            DB::commit();
+
+            $output = [
+                'success' => true,
+                'msg' => 'Transaction modifiée avec succès'
+            ];
+        } catch (\Exception $e) {
+            DB::rollBack();
+            $output = [
+                'success' => false,
+                'msg' => 'Erreur : ' . $e->getMessage()
+            ];
+        }
+
+        return redirect()->route('multiservices.show', $id)->with('status', $output);
+    }
+
+    public function complete(Request $request, $id)
+    {
+        if (!auth()->user()->can('multiservices.update')) {
+            return response()->json(['success' => false, 'msg' => 'Accès non autorisé']);
+        }
+
+        try {
+            DB::beginTransaction();
+
+            $transaction = MultiserviceTransaction::forBusiness(auth()->user()->business_id)->findOrFail($id);
+
+            if (!$transaction->canBeModified()) {
+                return response()->json(['success' => false, 'msg' => 'Cette transaction ne peut plus être modifiée']);
+            }
+
+            // Marquer la transaction comme complétée
+            $transaction->markAsCompleted(auth()->id());
+
+            // Mettre à jour le solde du compte opérateur
+            $this->updateOperatorAccountBalance($transaction);
+
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'msg' => 'Transaction complétée avec succès'
+            ]);
+
+        } catch (\Exception $e) {
+            DB::rollback();
+            \Log::error('Erreur completion transaction: ' . $e->getMessage());
+            return response()->json(['success' => false, 'msg' => 'Une erreur est survenue']);
+        }
+    }
+
+    /**
+     * Met à jour le solde du compte opérateur selon le type de transaction
+     */
+    private function updateOperatorAccountBalance($transaction)
+    {
+        // Trouver le compte opérateur correspondant
+        $account = \Modules\Multiservices\Entities\OperatorAccount::forBusiness($transaction->business_id)
+            ->where('location_id', $transaction->location_id)
+            ->where('operator', $transaction->operator)
+            ->where('is_active', true)
+            ->first();
+
+        if (!$account) {
+            \Log::warning("Aucun compte actif trouvé pour l'opérateur {$transaction->operator}");
+            return;
+        }
+
+        $notes = "Transaction {$transaction->reference_number} - " . ucfirst($transaction->transaction_type);
+
+        switch ($transaction->transaction_type) {
+            case 'deposit':
+                // Client dépose → Gérant envoie depuis son compte → Déduction
+                $account->withdraw($transaction->amount, $notes, auth()->id());
+                break;
+
+            case 'withdrawal':
+                // Client retire → Gérant reçoit sur son compte → Addition
+                $account->deposit($transaction->amount, $notes, auth()->id());
+                break;
+
+            case 'transfer':
+                // Transfert → Neutre (reçu = envoyé) → Aucun impact
+                // Aucune action
+                break;
+        }
+
+        // Enregistrer la référence dans l'historique
+        $lastTransaction = $account->transactions()->latest()->first();
+        if ($lastTransaction) {
+            $lastTransaction->update(['reference' => $transaction->reference_number]);
+        }
+    }
+
+    public function cancel(Request $request, $id)
+    {
+        // ⭐ NOUVELLE PERMISSION DÉDIÉE
+        if (!auth()->user()->can('multiservices.cancel')) {
+            abort(403, 'Vous n\'avez pas la permission d\'annuler des transactions');
+        }
+        
+        $businessId = auth()->user()->business_id;
+        $transaction = MultiserviceTransaction::forBusiness($businessId)->findOrFail($id);
+        
+        // ⭐ PERMETTRE L'ANNULATION DES TRANSACTIONS COMPLÉTÉES
+        if ($transaction->status === 'canceled') {
+            return response()->json([
+                'success' => false, 
+                'msg' => 'Cette transaction est déjà annulée'
+            ]);
+        }
+        
+        if ($transaction->status === 'failed') {
+            return response()->json([
+                'success' => false, 
+                'msg' => 'Cette transaction a déjà échoué'
+            ]);
+        }
+        
+        try {
+            DB::beginTransaction();
+            
+            // ⭐ SI LA TRANSACTION EST COMPLÉTÉE, INVERSER LES MOUVEMENTS DE CAISSE
+            if ($transaction->status === 'completed' && $transaction->cash_register_transaction_id) {
+                
+                // Récupérer le mouvement de caisse original
+                $originalCashTx = \App\CashRegisterTransaction::find($transaction->cash_register_transaction_id);
+                
+                if ($originalCashTx) {
+                    // Créer un mouvement INVERSE pour annulation
+                    $inverseCashTx = \App\CashRegisterTransaction::create([
+                        'cash_register_id' => $originalCashTx->cash_register_id,
+                        'amount' => $originalCashTx->amount,
+                        'pay_method' => 'cash',
+                        'type' => $originalCashTx->type === 'credit' ? 'debit' : 'credit', // INVERSE
+                        'transaction_type' => 'multiservices_cancel',
+                        'transaction_id' => $transaction->id,
+                    ]);
+                    
+                    \Log::info('Mouvement de caisse inversé pour annulation transaction #' . $transaction->id);
+                }
+            }
+            
+            // Marquer la transaction comme annulée
+            $transaction->status = 'canceled';
+            $transaction->canceled_at = now();
+            $transaction->canceled_by = auth()->id();
+            $transaction->cancel_reason = $request->reason ?? 'Annulée par ' . auth()->user()->username;
+            $transaction->save();
+            
+            DB::commit();
+            
+            return response()->json([
+                'success' => true, 
+                'msg' => 'Transaction annulée avec succès. Les mouvements de caisse ont été inversés.'
+            ]);
+            
+        } catch (\Exception $e) {
+            DB::rollBack();
+            \Log::error('Erreur annulation transaction: ' . $e->getMessage());
+            
+            return response()->json([
+                'success' => false, 
+                'msg' => 'Erreur lors de l\'annulation : ' . $e->getMessage()
+            ]);
+        }
+    }
+
+    public function destroy($id)
+    {
+        if (!auth()->user()->can('multiservices.delete')) {
+            abort(403, 'Accès non autorisé');
+        }
+
+        $transaction = MultiserviceTransaction::forBusiness(auth()->user()->business_id)->findOrFail($id);
+
+        if (!$transaction->canBeModified()) {
+            return response()->json(['success' => false, 'msg' => 'Cette transaction ne peut pas être supprimée']);
+        }
+
+        $transaction->delete();
+
+        return response()->json(['success' => true, 'msg' => 'Transaction supprimée avec succès']);
+    }
+
+    public function calculateFees(Request $request)
+    {
+        $amount = (float) str_replace([' ', ','], ['', '.'], $request->amount);
+        $businessId = auth()->user()->business_id;
+
+        $commission = MultiserviceCommission::findApplicable(
+            $businessId,
+            $request->operator,
+            $request->transaction_type,
+            $amount
+        );
+
+        $fee = $commission ? $commission->calculateCommission($amount) : 0;
+        
+        if ($request->transaction_type === 'withdrawal') {
+            $total = $amount - $fee;
+        } else {
+            $total = $amount + $fee;
+        }
+
+        return response()->json([
+            'fee' => number_format($fee, 0, ',', ' '),
+            'total' => number_format($total, 0, ',', ' '),
+            'profit' => number_format($fee, 0, ',', ' '),
+        ]);
+    }
+}

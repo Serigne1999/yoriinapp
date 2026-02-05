@@ -1,0 +1,9 @@
+public function up()
+{
+    DB::statement("ALTER TABLE multiservice_transactions MODIFY COLUMN operator VARCHAR(50) NOT NULL");
+}
+
+public function down()
+{
+    DB::statement("ALTER TABLE multiservice_transactions MODIFY COLUMN operator ENUM('wave','orange_money','ria','moneygram','western_union','autres') NOT NULL");
+}
